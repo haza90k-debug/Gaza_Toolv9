@@ -4,6 +4,7 @@
 V9 TOOL AI COMMENT BOT
 Bot Discord optimisé pour Termux Android
 Contrôle complet via Discord - Zéro interface web
+Système IA avancé de suggestion de commentaires
 """
 
 import discord
@@ -14,6 +15,7 @@ from datetime import datetime, timedelta
 from config import Config
 from database import Database
 from utils import Logger, format_uptime, get_ascii_art
+from ai_analyzer import analyzer
 
 # Initialisation
 config = Config()
@@ -41,8 +43,13 @@ stats = {
     "last_activity": datetime.now(),
     "auto_mode": False,
     "server_count": 0,
-    "user_count": 0
+    "user_count": 0,
+    "ai_analyses": 0,
+    "ai_suggestions": 0,
 }
+
+# Cache pour les analyses (pour éviter de réanalyser le même contenu)
+analysis_cache = {}
 
 
 @bot.event
@@ -121,6 +128,8 @@ async def cmd_help(ctx):
         ("!stop", "Désactive le mode automatique"),
         ("!dashboard", "Affiche le panneau Discord"),
         ("!uptime", "Affiche le temps d'activité"),
+        ("!analyse <texte>", "Analyse un contenu (texte, hashtags, URL)"),
+        ("!suggest [nombre]", "Génère des suggestions de commentaires"),
         ("!restart", "Redémarre le bot (Admin)"),
     ]
     
@@ -193,6 +202,8 @@ async def cmd_stats(ctx):
     embed.add_field(name="⚙️ Commandes exécutées", value=str(stats["commands_executed"]), inline=True)
     embed.add_field(name="💬 Messages analysés", value=str(stats["messages_analyzed"]), inline=True)
     embed.add_field(name="🤖 Réponses générées", value=str(stats["responses_generated"]), inline=True)
+    embed.add_field(name="🧠 Analyses IA", value=str(stats["ai_analyses"]), inline=True)
+    embed.add_field(name="💡 Suggestions IA", value=str(stats["ai_suggestions"]), inline=True)
     embed.add_field(name="🔄 Dernière activité", value=f"<t:{int(stats['last_activity'].timestamp())}:R>", inline=True)
     embed.add_field(name="📡 Serveurs connectés", value=str(stats["server_count"]), inline=True)
     embed.add_field(name="👥 Utilisateurs total", value=str(stats["user_count"]), inline=True)
@@ -272,6 +283,193 @@ async def cmd_uptime(ctx):
     await ctx.send(embed=embed)
 
 
+@bot.command(name="analyse")
+async def cmd_analyse(ctx, *, content: str):
+    """Analyse un contenu et détecte les catégories, hashtags, mots-clés"""
+    logger.info(f"🔍 Commande ANALYSE utilisée par {ctx.author}")
+    stats["commands_executed"] += 1
+    stats["messages_analyzed"] += 1
+    stats["ai_analyses"] += 1
+    stats["last_activity"] = datetime.now()
+    
+    try:
+        # Afficher un message "en attente"
+        processing_msg = await ctx.send("🔄 Analyse du contenu en cours...")
+        
+        # Analyser le contenu
+        analysis = analyzer.analyze(content)
+        
+        # Créer l'embed de résultat
+        embed = discord.Embed(
+            title="🔍 Analyse du Contenu",
+            description=f"Analyse complète du contenu",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now()
+        )
+        
+        # Résumé
+        embed.add_field(
+            name="📝 Résumé",
+            value=analysis["summary"][:250] if len(analysis["summary"]) > 250 else analysis["summary"],
+            inline=False
+        )
+        
+        # Thème principal
+        embed.add_field(
+            name="🎯 Thème Principal",
+            value=analysis["main_theme"].capitalize(),
+            inline=True
+        )
+        
+        # Catégories détectées
+        categories = ", ".join([cat.capitalize() for cat in analysis["categories"]])
+        embed.add_field(
+            name="📂 Catégories Détectées",
+            value=categories if categories else "Général",
+            inline=True
+        )
+        
+        # Mots-clés
+        keywords = ", ".join(analysis["keywords"]) if analysis["keywords"] else "Aucun"
+        embed.add_field(
+            name="🔑 Mots-Clés Importants",
+            value=keywords,
+            inline=False
+        )
+        
+        # Hashtags
+        hashtags = ", ".join(analysis["hashtags"]) if analysis["hashtags"] else "Aucun"
+        embed.add_field(
+            name="#️⃣ Hashtags Détectés",
+            value=hashtags,
+            inline=False
+        )
+        
+        # Statistiques
+        embed.add_field(
+            name="📊 Statistiques",
+            value=f"Mots: {analysis['word_count']}\nLongueur: {len(content)} caractères",
+            inline=False
+        )
+        
+        embed.set_footer(text="V9 TOOL AI COMMENT BOT | Analyse IA | Termux Android")
+        
+        # Modifier le message de traitement
+        await processing_msg.delete()
+        await ctx.send(embed=embed)
+        
+        # Logger
+        db.add_log({
+            "timestamp": datetime.now().isoformat(),
+            "event": "CONTENT_ANALYZED",
+            "user": str(ctx.author),
+            "theme": analysis["main_theme"],
+            "content_length": len(content),
+        })
+        
+        logger.success(f"✅ Analyse complétée - Thème: {analysis['main_theme']}")
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de l'analyse: {e}")
+        await ctx.send(f"❌ Erreur lors de l'analyse: {e}")
+
+
+@bot.command(name="suggest")
+async def cmd_suggest(ctx, count: int = 10):
+    """Génère des suggestions de commentaires basées sur la dernière analyse"""
+    logger.info(f"💡 Commande SUGGEST utilisée par {ctx.author}")
+    stats["commands_executed"] += 1
+    stats["responses_generated"] += count
+    stats["ai_suggestions"] += count
+    stats["last_activity"] = datetime.now()
+    
+    try:
+        # Limiter le nombre de suggestions
+        if count < 5:
+            count = 5
+        elif count > 20:
+            count = 20
+        
+        # Afficher un message "en attente"
+        processing_msg = await ctx.send(f"💡 Génération de {count} suggestions...")
+        
+        # Créer une analyse par défaut si nécessaire
+        if "last_analysis" not in ctx.bot.user_data:
+            default_content = "Contenu intéressant!"
+            analysis = analyzer.analyze(default_content)
+        else:
+            analysis = ctx.bot.user_data["last_analysis"]
+        
+        # Générer les suggestions
+        suggestions = analyzer.suggest(analysis, count=count)
+        
+        # Créer l'embed de résultat
+        embed = discord.Embed(
+            title="💡 Suggestions de Commentaires",
+            description=f"{count} suggestions adaptées au contenu",
+            color=discord.Color.gold(),
+            timestamp=datetime.now()
+        )
+        
+        # Ajouter les suggestions
+        for i, suggestion in enumerate(suggestions[:10], 1):  # Afficher max 10 par message
+            score_bar = "█" * (suggestion["relevance_score"] // 10) + "░" * (10 - suggestion["relevance_score"] // 10)
+            
+            field_value = f"💬 {suggestion['text']}\n\n"
+            field_value += f"📊 Pertinence: [{score_bar}] {suggestion['relevance_score']}%"
+            
+            embed.add_field(
+                name=f"#{i} - {suggestion['category'].capitalize()}",
+                value=field_value,
+                inline=False
+            )
+        
+        embed.set_footer(text="V9 TOOL AI COMMENT BOT | Suggestions IA | Termux Android")
+        
+        # Supprimer le message de traitement et envoyer le résultat
+        await processing_msg.delete()
+        await ctx.send(embed=embed)
+        
+        # Si plus de 10 suggestions, envoyer un deuxième message
+        if count > 10:
+            embed2 = discord.Embed(
+                title="💡 Suggestions de Commentaires (Suite)",
+                description=f"Suggestions {11} à {count}",
+                color=discord.Color.gold(),
+                timestamp=datetime.now()
+            )
+            
+            for i, suggestion in enumerate(suggestions[10:], 11):
+                score_bar = "█" * (suggestion["relevance_score"] // 10) + "░" * (10 - suggestion["relevance_score"] // 10)
+                
+                field_value = f"💬 {suggestion['text']}\n\n"
+                field_value += f"📊 Pertinence: [{score_bar}] {suggestion['relevance_score']}%"
+                
+                embed2.add_field(
+                    name=f"#{i} - {suggestion['category'].capitalize()}",
+                    value=field_value,
+                    inline=False
+                )
+            
+            embed2.set_footer(text="V9 TOOL AI COMMENT BOT | Suggestions IA | Termux Android")
+            await ctx.send(embed=embed2)
+        
+        # Logger
+        db.add_log({
+            "timestamp": datetime.now().isoformat(),
+            "event": "SUGGESTIONS_GENERATED",
+            "user": str(ctx.author),
+            "count": count,
+            "category": analysis["main_theme"],
+        })
+        
+        logger.success(f"✅ {count} suggestions générées")
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de la génération: {e}")
+        await ctx.send(f"❌ Erreur lors de la génération: {e}")
+
+
 @bot.command(name="dashboard")
 async def cmd_dashboard(ctx):
     """Affiche le panneau Discord"""
@@ -302,10 +500,17 @@ async def cmd_dashboard(ctx):
         inline=False
     )
     
+    # Section IA
+    embed.add_field(
+        name="🧠 Système IA",
+        value=f"```\nAnalyses: {stats['ai_analyses']}\nSuggestions: {stats['ai_suggestions']}\nMode Auto: {'Actif ✅' if stats['auto_mode'] else 'Inactif ❌'}\n```",
+        inline=False
+    )
+    
     # Section Réseau
     embed.add_field(
         name="🌐 Réseau",
-        value=f"```\nServeurs: {stats['server_count']}\nUtilisateurs: {stats['user_count']}\nMode Auto: {'Actif ✅' if stats['auto_mode'] else 'Inactif ❌'}\n```",
+        value=f"```\nServeurs: {stats['server_count']}\nUtilisateurs: {stats['user_count']}\n```",
         inline=False
     )
     
@@ -377,6 +582,9 @@ def main():
         
         logger.success("🔐 Token Discord chargé")
         logger.info("🔌 Connexion à Discord...")
+        
+        # Ajouter un attribut pour stocker les données utilisateur
+        bot.user_data = {}
         
         bot.run(token)
         
