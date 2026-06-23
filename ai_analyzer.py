@@ -9,6 +9,7 @@ import re
 import random
 from datetime import datetime
 from typing import List, Dict, Tuple
+from collections import Counter
 
 
 class AIAnalyzer:
@@ -232,7 +233,7 @@ class AIAnalyzer:
         category = analysis["main_theme"]
         
         # Obtenir les templates pour la catégorie
-        templates = self.SUGGESTIONS_TEMPLATES.get(category, self.SUGGESTIONS_TEMPLATES["général"])
+        templates = self.SUGGESTIONS_TEMPLATES.get(category, self.SUGGESTIONS_TEMPLATES.get(list(self.SUGGESTIONS_TEMPLATES.keys())[0]))
         
         # S'assurer qu'on n'utilise pas les mêmes suggestions
         cache_key = f"{category}_{count}"
@@ -267,8 +268,7 @@ class AIAnalyzer:
                 "text": suggestion_text,
                 "relevance_score": relevance_score,
                 "category": category,
-                "emoji_count": suggestion_text.count("🏿") + suggestion_text.count("🏾") + \
-                             len([c for c in suggestion_text if ord(c) > 127]),
+                "emoji_count": len([c for c in suggestion_text if ord(c) > 127]),
             })
         
         # Trier par pertinence
@@ -318,7 +318,6 @@ class AIAnalyzer:
         keywords = [w for w in words if len(w) > 2 and w.lower() not in stop_words]
         
         # Obtenir les 5 les plus fréquents
-        from collections import Counter
         freq = Counter(keywords)
         top_keywords = [word for word, _ in freq.most_common(5)]
         
